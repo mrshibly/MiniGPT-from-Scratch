@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import torch
 
 # Add project root to path for imports
@@ -8,79 +9,168 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from src.model.config import MiniGPTConfig
 from src.model.gpt import MiniGPT
 from src.datasets.dataloader import TokenDataLoader
+from src.tokenizer.minigpt_tokenizer import MiniGPTTokenizer
 
-def train():
-    # -------------------------------------------------------------------------
-    # 1. Setup Configuration & Device
-    # -------------------------------------------------------------------------
-    config = MiniGPTConfig.tiny()
-    
-    # Auto-detect optimal device
-    if torch.cuda.is_available():
-        device = "cuda"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        # For Apple Silicon
-        device = "mps"
-    else:
-        device = "cpu"
-        
-    print(f"Targeting device: {device}")
-    
-    # Hyperparameters for this tiny run
-    batch_size = 4
-    max_steps = 500
-    learning_rate = 3e-4 # Standard starting LR for AdamW
-    
-    # -------------------------------------------------------------------------
-    # 2. Load Data & Model
-    # -------------------------------------------------------------------------
-    train_bin = os.path.join("data", "processed", "train.bin")
-    if not os.path.exists(train_bin):
-        raise FileNotFoundError(f"Missing {train_bin}. Did you run Phase 1 preprocessing?")
-        
-    train_loader = TokenDataLoader(train_bin, device=device)
-    
-    print(f"Initializing Model (Vocab: {config.vocab_size}, Params: ...)")
-    model = MiniGPT(config)
-    model.to(device)
-    
-    params = sum(p.numel() for p in model.parameters())
-    print(f"Total Parameters: {params/1e6:.2f} M")
-    
-    # -------------------------------------------------------------------------
-    # 3. Setup Optimizer
-    # -------------------------------------------------------------------------
-    # Weight decay (L2 regularization) is standard practice
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-2)
-    
-    # -------------------------------------------------------------------------
-    # 4. Training Loop
-    # -------------------------------------------------------------------------
-    print("\nStarting Training Loop...")
-    
-    # Switch to training mode (enables Dropout)
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+out_dir = 'checkpoints'
+eval_interval = 250
+eval_iters = 20
+log_interval = 20
+always_save_checkpoint = True
+
+# Data configuration
+batch_size = 16 # adjust based on GPU RAM (lower if OOM)
+max_steps = 2000
+learning_rate = 6e-4 
+
+# Device and precision
+if torch.cuda.is_available():
+    device = "cuda"
+    device_type = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+    device_type = "mps"
+else:
+    device = "cpu"
+    device_type = "cpu"
+
+print(f"Targeting device: {device}")
+
+# We use bfloat16 for matrix multiplications if supported to save memory and go faster
+dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
+# AMP context manager (Automatic Mixed Precision)
+ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+ctx = torch.autocast(device_type=device_type, dtype=ptdtype) if device_type == 'cuda' else torch.autocast(device_type=device_type, dtype=ptdtype, enabled=False) if device_type == 'mps' else torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=False)
+
+
+# -----------------------------------------------------------------------------
+# Initialization
+# -----------------------------------------------------------------------------
+os.makedirs(out_dir, exist_ok=True)
+
+# Data loaders
+train_bin = os.path.join("data", "processed", "train.bin")
+val_bin = os.path.join("data", "processed", "val.bin")
+
+if not os.path.exists(train_bin) or not os.path.exists(val_bin):
+    raise FileNotFoundError("Missing train.bin or val.bin. Run Phase 1 preprocessing!")
+
+train_loader = TokenDataLoader(train_bin, device=device_type)
+val_loader = TokenDataLoader(val_bin, device=device_type)
+
+# Setup Model
+config = MiniGPTConfig.tiny() # Start tiny
+model = MiniGPT(config)
+model.to(device)
+
+# Load Tokenizer for Generation
+try:
+    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tokenizer", "tokenizer.json")
+    tokenizer = MiniGPTTokenizer(tok_path)
+except Exception as e:
+    print(f"Warning: Could not load tokenizer for text generation. Text generation will be skipped. ({e})")
+    tokenizer = None
+
+
+# Optimizer and Scaler
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-1, betas=(0.9, 0.95))
+scaler = torch.amp.GradScaler('cuda') if device_type == 'cuda' else None
+
+params = sum(p.numel() for p in model.parameters())
+print(f"Total Parameters: {params/1e6:.2f} M | Using Precision: {dtype}")
+
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+@torch.no_grad()
+def estimate_loss():
+    """ Runs several batches through train/val to get a stable, less-noisy exact loss. """
+    out = {}
+    model.eval()
+    for split, loader in [('train', train_loader), ('val', val_loader)]:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = loader.get_batch(batch_size, config.seq_len)
+            with ctx:
+                logits, loss = model(X, targets=Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean().item()
     model.train()
-    
-    for step in range(max_steps):
-        # Sample a batch of data
-        X, Y = train_loader.get_batch(batch_size, config.seq_len)
+    return out
+
+@torch.no_grad()
+def generate_sample(max_tokens=50):
+    if tokenizer is None: return
+    model.eval()
+    # Start with just the End of Text token as a prompt
+    context = torch.tensor([[tokenizer.eot_token_id]], dtype=torch.long, device=device)
+    # Generate
+    generated_ids = model.generate(context, max_new_tokens=max_tokens)[0].tolist()
+    # Decode
+    text = tokenizer.decode(generated_ids)
+    print(f"\n--- GENERATED SAMPLE ---\n{text}\n------------------------\n")
+    model.train()
+
+
+# -----------------------------------------------------------------------------
+# Training Loop
+# -----------------------------------------------------------------------------
+best_val_loss = 1e9
+t0 = time.time()
+
+print("\nStarting Training...")
+for step in range(max_steps):
+
+    # 1. Validation & Checkpointing Phase
+    if step % eval_interval == 0 or step == max_steps - 1:
+        losses = estimate_loss()
+        print(f"\nStep {step:4d} | Train Loss: {losses['train']:.4f} | Val Loss: {losses['val']:.4f}")
         
-        # Forward pass: model calculates logits and loss
+        # Save exact checkpoint if validation improved
+        if losses['val'] < best_val_loss or always_save_checkpoint:
+            best_val_loss = losses['val']
+            if step > 0: # don't save the random initialization
+                checkpoint = {
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'step': step,
+                    'best_val_loss': best_val_loss,
+                    'config': config,
+                }
+                print(f"-> Saving checkpoint to {out_dir}")
+                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                
+        # Generate some text to watch the model "learn"
+        if step > 0:
+            generate_sample()
+
+    # 2. Forward & Backward Pass Phase
+    X, Y = train_loader.get_batch(batch_size, config.seq_len)
+    
+    # Cast inner pass to mixed precision (e.g. bfloat16) for speed and memory
+    with ctx:
         logits, loss = model(X, targets=Y)
         
-        # Backward pass: compute gradients
-        # First zero out gradients from the previous step! Extremely important.
-        optimizer.zero_grad(set_to_none=True) 
+    # Scale gradients and step backward
+    optimizer.zero_grad(set_to_none=True)
+    
+    if scaler is not None:
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+    else:
         loss.backward()
-        
-        # Optimizer step: update weights
         optimizer.step()
-        
-        # Logging
-        if step % 10 == 0 or step == max_steps - 1:
-            print(f"Step {step:4d} | Training Loss: {loss.item():.4f}")
-            
-    print("\nTraining complete! The model successfully overfit the tiny batch.")
 
-if __name__ == "__main__":
-    train()
+    # 3. Logging Phase
+    if step % log_interval == 0:
+        t1 = time.time()
+        dt = t1 - t0
+        t0 = t1
+        # Calculate tokens processed per second
+        tokens_per_sec = (batch_size * config.seq_len) / dt
+        print(f"Step {step:4d} | Loss: {loss.item():.4f} | Time: {dt*1000:.2f}ms | Tok/sec: {tokens_per_sec:.2f}")
+
+print("\nDone!")
