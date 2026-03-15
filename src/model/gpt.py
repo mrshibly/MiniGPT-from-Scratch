@@ -9,8 +9,18 @@ from src.model.config import MiniGPTConfig
 from src.model.blocks import Block
 
 class MiniGPT(nn.Module):
+    """ The full GPT Language Model, with a context size of config.seq_len. """
+    
     def __init__(self, config: MiniGPTConfig):
+        """
+        Initializes the MiniGPT model.
+
+        Args:
+            config (MiniGPTConfig): Configuration object containing model parameters.
+        """
         super().__init__()
+        assert config.vocab_size is not None
+        assert config.seq_len is not None
         self.config = config
 
         # The core Transformer module dictionary
@@ -57,8 +67,15 @@ class MiniGPT(nn.Module):
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor = None):
         """
-        Forward pass of the model.
-        idx: Input tensor of token ids, shape (B, T)
+        Perform a forward pass through the model.
+        
+        Args:
+            idx (torch.Tensor): LongTensor of shape (B, T) containing token indices.
+            targets (torch.Tensor, optional): LongTensor of shape (B, T) containing target token indices.
+            
+        Returns:
+            logits (torch.Tensor): Tensor of shape (B, T, vocab_size) with word scores.
+            loss (torch.Tensor, optional): Scalar CrossEntropy loss if targets are provided.
         """
         device = idx.device
         b, t = idx.size()
@@ -99,10 +116,19 @@ class MiniGPT(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_k: int = None) -> torch.Tensor:
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (B, T)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        
+        Args:
+            idx (torch.Tensor): Seed sequence of shape (B, T).
+            max_new_tokens (int): Number of tokens to append.
+            temperature (float): Scaling factor for the logits (lower = more deterministic).
+            top_k (int, optional): If set, only sample from the top k most likely tokens.
+            
+        Returns:
+            torch.Tensor: The sequence with generated tokens appended, shape (B, T + max_new_tokens).
         """
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at seq_len
@@ -110,7 +136,13 @@ class MiniGPT(nn.Module):
             # forward the model to get the logits for the index in the sequence
             logits, _ = self(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
-            logits = logits[:, -1, :] # becomes (B, C)
+            logits = logits[:, -1, :] / temperature # becomes (B, C)
+            
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+                
             # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
             # sample from the distribution
@@ -152,8 +184,8 @@ if __name__ == "__main__":
     prompt = torch.randint(0, config.vocab_size, (1, 4))
     print(f"Prompt shape: {prompt.shape}")
     
-    # Generate 20 new tokens
-    generated = model.generate(prompt, max_new_tokens=20)
+    # Generate 20 new tokens with temperature and top_k
+    generated = model.generate(prompt, max_new_tokens=20, temperature=0.8, top_k=50)
     print(f"Generated shape: {generated.shape}")
     print(f"Expected shape: (1, 24)")
     

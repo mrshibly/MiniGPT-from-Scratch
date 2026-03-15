@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import math
+from typing import Type
 
 class Head(nn.Module):
-    """ One head of self-attention """
-    def __init__(self, head_size, config):
+    """ one head of self-attention """
+    def __init__(self, head_size: int, config: Type['MiniGPTConfig']):
         super().__init__()
         self.key = nn.Linear(config.d_model, head_size, bias=config.bias)
         self.query = nn.Linear(config.d_model, head_size, bias=config.bias)
@@ -17,7 +18,16 @@ class Head(nn.Module):
         
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute causal self-attention for a single head.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (Batch, Time, Channels).
+            
+        Returns:
+            torch.Tensor: Attended values of shape (Batch, Time, head_size).
+        """
         # input of size (batch, time-step, channels)
         # output of size (batch, time-step, head_size)
         B, T, C = x.shape
@@ -50,7 +60,16 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(config.d_model, config.d_model, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute multi-head attention.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, T, C).
+            
+        Returns:
+            torch.Tensor: Multi-head attended values of shape (B, T, C).
+        """
         out = torch.cat([h(x) for h in self.heads], dim=-1)
         out = self.dropout(self.proj(out))
         return out

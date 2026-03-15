@@ -13,7 +13,13 @@ class FeedForward(nn.Module):
             nn.Dropout(config.dropout),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """ 
+        Process input through a 2-layer MLP with GELU.
+        
+        Args:
+            x (torch.Tensor): Shape (B, T, C).
+        """
         return self.net(x)
 
 class Block(nn.Module):
@@ -29,7 +35,13 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.d_model)
         self.ffwd = FeedForward(config)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Combine MultiHeadAttention and FeedForward with LayerNorm and Residual Connections.
+        
+        Args:
+            x (torch.Tensor): Shape (B, T, C).
+        """
         # Pre-norm formulation (LayerNorm is applied before attention and before MLP)
         x = x + self.attn(self.ln_1(x))
         x = x + self.ffwd(self.ln_2(x))
