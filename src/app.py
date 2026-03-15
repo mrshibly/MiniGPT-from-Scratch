@@ -39,8 +39,20 @@ def load_resources(checkpoint_path):
         model.to(device)
         model.eval()
         
-        # Load Tokenizer
-        tokenizer = MiniGPTTokenizer(DEFAULT_TOKENIZER)
+        # Load Tokenizer (check multiple paths)
+        tok_paths = [
+            os.path.join("src", "tokenizer", "tokenizer.json"),
+            os.path.join("data", "tokenizer", "tokenizer.json"),
+            "tokenizer.json"
+        ]
+        tokenizer = None
+        for p in tok_paths:
+            if os.path.exists(p):
+                tokenizer = MiniGPTTokenizer(p)
+                break
+        
+        if tokenizer is None:
+            return "Model loaded, but Tokenizer file not found. Inference will not work."
         
         return f"Successfully loaded model from {checkpoint_path} ({sum(p.numel() for p in model.parameters())/1e6:.2f}M parameters)."
     except Exception as e:

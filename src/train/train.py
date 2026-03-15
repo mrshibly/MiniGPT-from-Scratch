@@ -72,12 +72,22 @@ model = MiniGPT(config)
 model.to(device)
 
 # Load Tokenizer for Generation
-try:
-    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tokenizer", "tokenizer.json")
-    tokenizer = MiniGPTTokenizer(tok_path)
-except Exception as e:
-    print(f"Warning: Could not load tokenizer for text generation. Text generation will be skipped. ({e})")
-    tokenizer = None
+tokenizer = None
+tok_paths = [
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tokenizer", "tokenizer.json"), # src/tokenizer/
+    os.path.join("data", "tokenizer", "tokenizer.json"), # data/tokenizer/
+    os.path.join("tokenizer", "tokenizer.json"), # local dir
+]
+for p in tok_paths:
+    if os.path.exists(p):
+        try:
+            tokenizer = MiniGPTTokenizer(p)
+            break
+        except:
+            continue
+
+if tokenizer is None:
+    print("Warning: Could not load tokenizer for text generation. Text generation will be skipped.")
 
 
 # Optimizer and Scaler
