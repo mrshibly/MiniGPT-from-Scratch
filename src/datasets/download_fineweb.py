@@ -1,13 +1,12 @@
 import os
+import argparse
 from datasets import load_dataset
 from tqdm import tqdm
 
-def download_sample():
+def download_sample(max_bytes):
     print("Downloading FineWeb-Edu sample-10BT...")
     
-    # Load dataset in streaming mode to just grab a few examples quickly without downloading 10 billion tokens
-    # Alternatively we can use split="train" without streaming to get the whole 10BT (about 27GB), 
-    # but for a "tiny sample" on Day 1, streaming and saving 10MB is faster.
+    # Load dataset...
     dataset = load_dataset("HuggingFaceFW/fineweb-edu", name="sample-10BT", split="train", streaming=True)
     
     output_dir = os.path.join("data", "raw")
@@ -15,7 +14,6 @@ def download_sample():
     output_file = os.path.join(output_dir, "sample.txt")
     
     shard_size = 10**8 # 100MB per shard
-    max_bytes = 500 * 1024 * 1024 # Current limit (will be swapped by notebook for 10GB runs)
     current_bytes = 0
     
     print(f"Saving ~{max_bytes / (1024*1024):.0f}MB of text to {output_file}...")
@@ -38,4 +36,12 @@ def download_sample():
     print(f"Successfully saved {current_bytes / (1024*1024):.2f} MB of text!")
 
 if __name__ == "__main__":
-    download_sample()
+    parser = argparse.ArgumentParser(description="Download a sample of FineWeb-Edu dataset.")
+    parser.add_argument("--max_gb", type=float, default=0.5, help="Maximum amount of data to download in GB (default: 0.5)")
+    args = parser.parse_args()
+    
+    # Calculate max_bytes from GB
+    mb_limit = args.max_gb * 1024
+    max_bytes = int(args.max_gb * 1024 * 1024 * 1024)
+    
+    download_sample(max_bytes)
