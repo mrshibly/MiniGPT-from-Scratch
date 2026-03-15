@@ -29,18 +29,23 @@ class MiniGPTConfig:
         )
 
     @classmethod
-    def main(cls):
+    def standard(cls):
         """
         The main target configuration for the 30-day curriculum.
         ~50M parameters.
         """
         return cls(
-            vocab_size=32000,
+            vocab_size=16384, # Match our custom tokenizer
             seq_len=512,
             d_model=512,
-            n_layers=12,
+            n_layers=6, # Standard GPT-2 small has 12, but we'll use 6 for 50M params
             n_heads=8
         )
+
+    @classmethod
+    def main(cls):
+        # Alias for backward compatibility
+        return cls.standard()
 
     @classmethod
     def stretch(cls):
