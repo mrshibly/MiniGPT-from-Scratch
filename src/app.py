@@ -62,9 +62,14 @@ def generate_text(prompt, max_new_tokens, temperature, top_k):
     if model is None or tokenizer is None:
         return "Please load a model checkpoint first!"
     
-    # Encode prompt
-    tokens = tokenizer.encode(prompt)
-    idx = torch.tensor([tokens], dtype=torch.long, device=device)
+    # Encode prompt (ensure it's not empty)
+    if not prompt.strip():
+        # Use End of Text token as default prompt
+        idx = torch.tensor([[tokenizer.eot_id]], dtype=torch.long, device=device)
+    else:
+        # tokens is likely already a tensor based on MiniGPTTokenizer implementation
+        tokens = tokenizer.encode(prompt, return_tensors="pt")
+        idx = tokens.unsqueeze(0).to(device) # Add batch dimension -> (1, T)
     
     # Generate
     generated_idx = model.generate(

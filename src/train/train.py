@@ -20,6 +20,7 @@ eval_interval = 250
 eval_iters = 20
 log_interval = 20
 always_save_checkpoint = True
+init_from = 'resume' # 'scratch' or 'resume'
 
 # Data configuration
 batch_size = 8 # Lower for 50M model on free Colab GPUs
@@ -147,10 +148,23 @@ def get_lr(it):
 # Training Loop
 # -----------------------------------------------------------------------------
 best_val_loss = 1e9
+start_step = 0
+
+# Check for existing checkpoint to resume from
+ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+if init_from == 'resume' and os.path.exists(ckpt_path):
+    print(f"Resuming training from {ckpt_path}...")
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    model.load_state_dict(checkpoint['model'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    start_step = checkpoint['step'] + 1
+    best_val_loss = checkpoint.get('best_val_loss', 1e9)
+    print(f"-> Restarting from Step {start_step} (Best Val Loss: {best_val_loss:.4f})")
+
 t0 = time.time()
 
 print("\nStarting Training...")
-for step in range(max_steps):
+for step in range(start_step, max_steps):
 
     # 1. Validation & Checkpointing Phase
     if step % eval_interval == 0 or step == max_steps - 1:

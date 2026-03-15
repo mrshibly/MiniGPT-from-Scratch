@@ -54,7 +54,7 @@ class MiniGPTConfig:
         ~124M parameters (GPT-2 Small size).
         """
         return cls(
-            vocab_size=32000, # or 50257 for exact GPT-2
+            vocab_size=16384, # Match our custom tokenizer
             seq_len=512,
             d_model=768,
             n_layers=12,
