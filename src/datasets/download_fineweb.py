@@ -15,7 +15,7 @@ def download_sample():
     output_file = os.path.join(output_dir, "sample.txt")
     
     shard_size = 10**8 # 100MB per shard
-    max_bytes = 500 * 1024 * 1024 # 500MB total limit for this run
+    max_bytes = 500 * 1024 * 1024 # Current limit (will be swapped by notebook for 10GB runs)
     current_bytes = 0
     
     print(f"Saving ~{max_bytes / (1024*1024):.0f}MB of text to {output_file}...")
