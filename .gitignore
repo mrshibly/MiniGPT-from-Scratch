@@ -2,7 +2,9 @@ venv/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+checkpoints/
+!checkpoints/ckpt.pt
 data/raw/
 data/processed/*.txt
-checkpoints/
+!data/tokenizer/tokenizer.json
 outputs/
