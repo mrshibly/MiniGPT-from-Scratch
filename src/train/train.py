@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import math
 import torch
 
 # Add project root to path for imports
@@ -23,7 +24,12 @@ always_save_checkpoint = True
 # Data configuration
 batch_size = 16 # adjust based on GPU RAM (lower if OOM)
 max_steps = 2000
-learning_rate = 6e-4 
+
+# Learning Rate configuration
+max_lr = 6e-4 
+min_lr = max_lr * 0.1
+warmup_steps = 100
+lr_decay_iters = max_steps
 
 # Device and precision
 if torch.cuda.is_available():
@@ -75,7 +81,7 @@ except Exception as e:
 
 
 # Optimizer and Scaler
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-1, betas=(0.9, 0.95))
+optimizer = torch.optim.AdamW(model.parameters(), lr=max_lr, weight_decay=1e-1, betas=(0.9, 0.95))
 scaler = torch.amp.GradScaler('cuda') if device_type == 'cuda' else None
 
 params = sum(p.numel() for p in model.parameters())
@@ -113,6 +119,19 @@ def generate_sample(max_tokens=50):
     print(f"\n--- GENERATED SAMPLE ---\n{text}\n------------------------\n")
     model.train()
 
+def get_lr(it):
+    """ Learning rate scheduler with Warmup and Cosine Decay """
+    # 1) linear warmup for warmup_iters steps
+    if it < warmup_steps:
+        return max_lr * (it + 1) / warmup_steps
+    # 2) if it > lr_decay_iters, return min learning rate
+    if it > lr_decay_iters:
+        return min_lr
+    # 3) in between, use cosine decay down to min learning rate
+    decay_ratio = (it - warmup_steps) / (lr_decay_iters - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
+    return min_lr + coeff * (max_lr - min_lr)
 
 # -----------------------------------------------------------------------------
 # Training Loop
@@ -146,6 +165,11 @@ for step in range(max_steps):
         if step > 0:
             generate_sample()
 
+    # Determine and set the learning rate for this step
+    lr = get_lr(step)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
     # 2. Forward & Backward Pass Phase
     X, Y = train_loader.get_batch(batch_size, config.seq_len)
     
@@ -171,6 +195,6 @@ for step in range(max_steps):
         t0 = t1
         # Calculate tokens processed per second
         tokens_per_sec = (batch_size * config.seq_len) / dt
-        print(f"Step {step:4d} | Loss: {loss.item():.4f} | Time: {dt*1000:.2f}ms | Tok/sec: {tokens_per_sec:.2f}")
+        print(f"Step {step:4d} | Loss: {loss.item():.4f} | LR: {lr:.2e} | Time: {dt*1000:.2f}ms | Tok/sec: {tokens_per_sec:.2f}")
 
 print("\nDone!")
