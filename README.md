@@ -67,5 +67,12 @@ python src/app.py
 | Tiny   | ~7M    | 4      | 4     | 256     |
 | Standard| ~50M   | 6      | 8     | 512     |
 
+## 📊 Latest Training Benchmarks
+- **Dataset**: 500MB FineWeb-Edu
+- **Parameters**: 27.54 Million
+- **Validation Loss**: 4.8415
+- **Perplexity**: 126.65
+- **Status**: Successfully generating coherent English-like sentences.
+
 ## 📄 License
 MIT
