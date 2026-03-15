@@ -1,3 +1,14 @@
+---
+title: MiniGPT-from-Scratch
+emoji: 🚀
+colorFrom: indigo
+colorTo: purple
+sdk: gradio
+sdk_version: 5.16.2
+app_file: app.py
+pinned: false
+---
+
 # MiniGPT-from-Scratch 🚀
 
 A from-scratch implementation of a decoder-only Transformer (GPT) language model, built in 30 days. This project is designed as a deep-dive into LLM engineering, following the architecture of GPT-2.

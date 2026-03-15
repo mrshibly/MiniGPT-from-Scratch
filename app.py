@@ -155,7 +155,7 @@ input[type="range"] {
 
 with gr.Blocks(css=custom_css, title="MiniGPT | Nano-Scale Intelligence") as demo:
     with gr.Column(elem_id="container"):
-        with gr.Div(elem_id="header"):
+        with gr.Column(elem_id="header"):
             gr.Markdown("# ⚡ MiniGPT: Nano-Scale Intelligence")
             gr.Markdown("A custom-trained GPT model optimized for efficiency and performance. | [GitHub Repository](https://github.com/mrshibly/MiniGPT-from-Scratch)", elem_classes="info-text")
         

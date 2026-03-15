@@ -23,7 +23,8 @@ always_save_checkpoint = True
 init_from = 'resume' # 'scratch' or 'resume'
 
 # Data configuration
-batch_size = 8 # Lower for 50M model on free Colab GPUs
+batch_size = 8 # Micro-batch size. Increase if your GPU has more VRAM.
+grad_accum_steps = 4 # Total batch size = batch_size * grad_accum_steps
 max_steps = 10000
 
 # Learning Rate configuration
@@ -195,21 +196,30 @@ for step in range(start_step, max_steps):
         param_group['lr'] = lr
 
     # 2. Forward & Backward Pass Phase
-    X, Y = train_loader.get_batch(batch_size, config.seq_len)
-    
-    # Cast inner pass to mixed precision (e.g. bfloat16) for speed and memory
-    with ctx:
-        logits, loss = model(X, targets=Y)
-        
-    # Scale gradients and step backward
+    # We use gradient accumulation to simulate a larger batch size
     optimizer.zero_grad(set_to_none=True)
     
+    loss_accum = 0.0
+    for micro_step in range(grad_accum_steps):
+        X, Y = train_loader.get_batch(batch_size, config.seq_len)
+        
+        # Cast inner pass to mixed precision (e.g. bfloat16) for speed and memory
+        with ctx:
+            logits, loss = model(X, targets=Y)
+            # scale the loss to account for gradient accumulation
+            loss = loss / grad_accum_steps
+            loss_accum += loss.item()
+            
+        if scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+    # Step the optimizer
     if scaler is not None:
-        scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
     else:
-        loss.backward()
         optimizer.step()
 
     # 3. Logging Phase
@@ -218,7 +228,7 @@ for step in range(start_step, max_steps):
         dt = t1 - t0
         t0 = t1
         # Calculate tokens processed per second
-        tokens_per_sec = (batch_size * config.seq_len) / dt
-        print(f"Step {step:4d} | Loss: {loss.item():.4f} | LR: {lr:.2e} | Time: {dt*1000:.2f}ms | Tok/sec: {tokens_per_sec:.2f}")
+        tokens_per_sec = (batch_size * grad_accum_steps * config.seq_len) / dt
+        print(f"Step {step:4d} | Loss: {loss_accum:.4f} | LR: {lr:.2e} | Time: {dt*1000:.2f}ms | Tok/sec: {tokens_per_sec:.2f}")
 
 print("\nDone!")
