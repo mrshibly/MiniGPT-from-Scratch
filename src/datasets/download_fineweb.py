@@ -14,14 +14,15 @@ def download_sample():
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, "sample.txt")
     
-    target_bytes = 10 * 1024 * 1024  # 10 MB
+    shard_size = 10**8 # 100MB per shard
+    max_bytes = 500 * 1024 * 1024 # 500MB total limit for this run
     current_bytes = 0
     
-    print(f"Saving ~10MB of text to {output_file}...")
+    print(f"Saving ~{max_bytes / (1024*1024):.0f}MB of text to {output_file}...")
     
     with open(output_file, "w", encoding="utf-8") as f:
         # Use a reasonable guess for characters per MB to show a progress bar
-        pbar = tqdm(total=target_bytes, unit="B", unit_scale=True, desc="Downloading")
+        pbar = tqdm(total=max_bytes, unit="B", unit_scale=True, desc="Downloading")
         for idx, row in enumerate(dataset):
             text = row["text"]
             f.write(text + "\n\n")
@@ -30,7 +31,7 @@ def download_sample():
             current_bytes += bytes_added
             pbar.update(bytes_added)
             
-            if current_bytes >= target_bytes:
+            if current_bytes >= max_bytes:
                 break
         pbar.close()
         

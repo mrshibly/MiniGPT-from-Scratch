@@ -22,13 +22,13 @@ log_interval = 20
 always_save_checkpoint = True
 
 # Data configuration
-batch_size = 16 # adjust based on GPU RAM (lower if OOM)
-max_steps = 2000
+batch_size = 8 # Lower for 50M model on free Colab GPUs
+max_steps = 10000
 
 # Learning Rate configuration
-max_lr = 6e-4 
+max_lr = 4e-4 
 min_lr = max_lr * 0.1
-warmup_steps = 100
+warmup_steps = 200
 lr_decay_iters = max_steps
 
 # Device and precision
@@ -67,7 +67,7 @@ train_loader = TokenDataLoader(train_bin, device=device_type)
 val_loader = TokenDataLoader(val_bin, device=device_type)
 
 # Setup Model
-config = MiniGPTConfig.tiny() # Start tiny
+config = MiniGPTConfig.standard() # Use 50M param config
 model = MiniGPT(config)
 model.to(device)
 
