@@ -227,8 +227,8 @@ for step in range(start_step, max_steps):
         t1 = time.time()
         dt = t1 - t0
         t0 = t1
-        # Calculate tokens processed per second
-        tokens_per_sec = (batch_size * grad_accum_steps * config.seq_len) / dt
+        # Calculate tokens processed per second (over the log_interval window)
+        tokens_per_sec = (batch_size * grad_accum_steps * config.seq_len * log_interval) / dt
         print(f"Step {step:4d} | Loss: {loss_accum:.4f} | LR: {lr:.2e} | Time: {dt*1000:.2f}ms | Tok/sec: {tokens_per_sec:.2f}")
 
 print("\nDone!")
