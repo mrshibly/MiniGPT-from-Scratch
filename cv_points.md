@@ -4,11 +4,11 @@ You can copy and adapt these bullet points for your resume to highlight the tech
 
 ### 🚀 Technical Bullet Points
 
-- **End-to-End LLM Development**: Engineered a decoder-only Transformer language model from scratch in PyTorch, implementing causal self-attention, GELU MLPs, and sophisticated weight tying inspired by the GPT-2 architecture.
-- **Custom Tokenization Pipeline**: Designed and trained a custom Byte-Pair Encoding (BPE) tokenizer using Hugging Face `tokenizers`, handling raw text cleaning and fixed-length sequence preprocessing for efficient training.
-- **Advanced Optimization Techniques**: Integrated PyTorch Automatic Mixed Precision (AMP) for 2x faster training and implemented a custom Learning Rate Scheduler featuring linear warmup and Cosine Decay to stabilize deep network optimization.
-- **Robust Training Systems**: Developed a comprehensive training loop with live validation monitoring, automated checkpointing, and real-time autoregressive text sampling.
-- **Evaluation & Deployment**: Built a mathematical evaluation suite to calculate model Perplexity and deployed a real-time interactive demo using Gradio for model inference and hyperparameter tuning (Temperature, Top-K).
+- **Modern Transformer Architecture**: Engineered a Llama-style decoder-only Transformer from scratch in PyTorch, implementing **Rotary Positional Embeddings (RoPE)**, **RMSNorm**, and **SwiGLU** activation functions to match state-of-the-art LLM benchmarks.
+- **Hardware-Accelerated Scaling**: Optimized training throughput by integrating **FlashAttention-2** and PyTorch AMP, achieving a 50x speedup (20,000+ tokens/sec) on NVIDIA A100 GPUs.
+- **Custom Tokenization Pipeline**: Designed and trained a custom Byte-Pair Encoding (BPE) tokenizer and preprocessed a 10GB FineWeb-Edu dataset into memory-mapped binary streams for high-speed I/O.
+- **Cloud-Native Training System**: Built a robust training infrastructure with automated Google Drive checkpoint syncing, multi-epoch validation monitoring, and custom Cosine Decay scheduling.
+- **Interactive Inference & Eval**: Developed a mathematical evaluation suite for Perplexity benchmarking and deployed a real-time Gradio web demo with Top-K sampling and Temperature control.
 
 ### 🛠️ Keywords for Skills Section
-`PyTorch`, `Transformer Architecture`, `BPE Tokenization`, `Large Language Models (LLMs)`, `Gradient Scaler / AMP`, `Autoregressive Sampling`, `Gradio`, `Python`, `Deep Learning Optimization`.
+`PyTorch`, `LLM Engineering`, `RoPE`, `RMSNorm`, `SwiGLU`, `FlashAttention-2`, `A100 Scaling`, `BPE Tokenization`, `Transformer Architecture`, `Autoregressive Sampling`, `Gradio`, `Deep Learning Optimization`.

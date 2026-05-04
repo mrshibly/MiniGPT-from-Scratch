@@ -156,8 +156,8 @@ input[type="range"] {
 with gr.Blocks(css=custom_css, title="MiniGPT | Nano-Scale Intelligence") as demo:
     with gr.Column(elem_id="container"):
         with gr.Column(elem_id="header"):
-            gr.Markdown("# ⚡ MiniGPT: Nano-Scale Intelligence")
-            gr.Markdown("A custom-trained GPT model optimized for efficiency and performance. | [GitHub Repository](https://github.com/mrshibly/MiniGPT-from-Scratch)", elem_classes="info-text")
+            gr.Markdown("# 🚀 MiniGPT: Modern Transformer Intelligence")
+            gr.Markdown("Modern Llama-style Architecture (RoPE, RMSNorm, SwiGLU) | [GitHub Repository](https://github.com/mrshibly/MiniGPT-from-Scratch)", elem_classes="info-text")
         
         with gr.Row():
             with gr.Column(scale=3):
