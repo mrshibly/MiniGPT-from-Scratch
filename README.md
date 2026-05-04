@@ -11,11 +11,11 @@ pinned: false
 
 # MiniGPT-from-Scratch 🚀
 
-A from-scratch implementation of a decoder-only Transformer (GPT) language model, built in 30 days. This project is designed as a deep-dive into LLM engineering, following the architecture of GPT-2.
+A from-scratch implementation of a modern, decoder-only Transformer language model, built in 30 days. This project is a deep-dive into state-of-the-art LLM engineering, transitioning from classic GPT-2 designs to modern Llama-style architectures.
 
 ## 🌟 Features
 - **Custom BPE Tokenizer**: Fully trained on the dataset using Hugging Face `tokenizers`.
-- **GPT Architecture**: Multi-head causal self-attention, GELU MLPs, LayerNorm (Pre-Norm), and residual connections.
+- **Modern Architecture**: Multi-head causal self-attention, **SwiGLU** MLPs, **RMSNorm** (Pre-Norm), and **Rotary Positional Embeddings (RoPE)**.
 - **Optimized Training**: Supports PyTorch **Flash Attention (A100/V100)**, AMP (Mixed Precision), Cosine Decay with Warmup, and Gradient Accumulation.
 - **Interactive Demo**: Built-in Gradio web app for real-time text generation.
 - **Evaluation**: Integrated perplexity calculation for model benchmarking.
