@@ -16,7 +16,7 @@ A from-scratch implementation of a decoder-only Transformer (GPT) language model
 ## 🌟 Features
 - **Custom BPE Tokenizer**: Fully trained on the dataset using Hugging Face `tokenizers`.
 - **GPT Architecture**: Multi-head causal self-attention, GELU MLPs, LayerNorm (Pre-Norm), and residual connections.
-- **Optimized Training**: Supports PyTorch AMP (Mixed Precision), Cosine Decay with Warmup, and weight tying.
+- **Optimized Training**: Supports PyTorch **Flash Attention (A100/V100)**, AMP (Mixed Precision), Cosine Decay with Warmup, and Gradient Accumulation.
 - **Interactive Demo**: Built-in Gradio web app for real-time text generation.
 - **Evaluation**: Integrated perplexity calculation for model benchmarking.
 
@@ -73,17 +73,17 @@ python src/app.py
 ```
 
 ## 📊 Model Configurations
-| Config | Params | Layers | Heads | d_model |
-|--------|--------|--------|-------|---------|
-| Tiny   | ~7M    | 4      | 4     | 256     |
-| Standard| ~50M   | 6      | 8     | 512     |
+| Config   | Params  | Layers | Heads | d_model | Target Device |
+|----------|---------|--------|-------|---------|---------------|
+| Tiny     | ~7M     | 4      | 4     | 256     | CPU/Laptop    |
+| Standard | ~50M    | 6      | 8     | 512     | Free GPU      |
+| **Stretch** | **~124M** | **12** | **12**| **768** | **Colab Pro (A100)** |
 
 ## 📊 Latest Training Benchmarks
-- **Dataset**: 500MB FineWeb-Edu
-- **Parameters**: 27.54 Million
-- **Validation Loss**: 4.8415
-- **Perplexity**: 126.65
-- **Status**: Successfully generating coherent English-like sentences.
+- **Dataset**: 10GB FineWeb-Edu (Targeting)
+- **Parameters**: 124 Million
+- **Optimization**: FlashAttention-2 enabled via Colab Pro.
+- **Status**: Scaling up to GPT-2 Small equivalent intelligence.
 
 ## 📄 License
 MIT
