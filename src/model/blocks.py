@@ -1,50 +1,51 @@
 import torch
 import torch.nn as nn
 
-class FeedForward(nn.Module):
-    """ a simple linear layer followed by a non-linearity """
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
 
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x):
+        output = self._norm(x.float()).type_as(x)
+        return output * self.weight
+
+class FeedForward(nn.Module):
+    """ SwiGLU MLP as used in Llama/Gemma """
     def __init__(self, config):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(config.d_model, 4 * config.d_model, bias=config.bias),
-            nn.GELU(),
-            nn.Linear(4 * config.d_model, config.d_model, bias=config.bias),
-            nn.Dropout(config.dropout),
-        )
+        # SwiGLU uses 3 linear layers
+        # d_model -> intermediate_size (gate & up)
+        # intermediate_size -> d_model (down)
+        # We usually use 2/3 * 4 * d_model as intermediate size for SwiGLU
+        hidden_dim = int(2 * (4 * config.d_model) / 3)
+        self.w1 = nn.Linear(config.d_model, hidden_dim, bias=config.bias) # gate
+        self.w2 = nn.Linear(config.d_model, hidden_dim, bias=config.bias) # up
+        self.w3 = nn.Linear(hidden_dim, config.d_model, bias=config.bias) # down
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """ 
-        Process input through a 2-layer MLP with GELU.
-        
-        Args:
-            x (torch.Tensor): Shape (B, T, C).
-        """
-        return self.net(x)
+        # silu(w1(x)) * w2(x) then project with w3
+        return self.dropout(self.w3(nn.functional.silu(self.w1(x)) * self.w2(x)))
 
 class Block(nn.Module):
-    """ Transformer block: communication followed by computation """
-
+    """ Transformer block: communication (Attention) followed by computation (MLP) """
     def __init__(self, config):
-        # We need to import MultiHeadAttention here to avoid circular imports if attention.py imports config
-        # actually, it's better to import at the top
         super().__init__()
         from src.model.attention import MultiHeadAttention
-        self.ln_1 = nn.LayerNorm(config.d_model)
-        self.attn = MultiHeadAttention(config)
-        self.ln_2 = nn.LayerNorm(config.d_model)
-        self.ffwd = FeedForward(config)
+        self.attention_norm = RMSNorm(config.d_model)
+        self.attention = MultiHeadAttention(config)
+        self.ffn_norm = RMSNorm(config.d_model)
+        self.feed_forward = FeedForward(config)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Combine MultiHeadAttention and FeedForward with LayerNorm and Residual Connections.
-        
-        Args:
-            x (torch.Tensor): Shape (B, T, C).
-        """
-        # Pre-norm formulation (LayerNorm is applied before attention and before MLP)
-        x = x + self.attn(self.ln_1(x))
-        x = x + self.ffwd(self.ln_2(x))
+        # Pre-norm architecture
+        x = x + self.attention(self.attention_norm(x))
+        x = x + self.feed_forward(self.ffn_norm(x))
         return x
 
 if __name__ == "__main__":

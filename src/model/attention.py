@@ -4,40 +4,53 @@ from torch.nn import functional as F
 import math
 from typing import Type
 
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end, device=freqs.device)
+    freqs = torch.outer(t, freqs).float()
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+    return freqs_cis
+
+def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+    # x shape: (B, T, n_heads, head_dim)
+    # freqs_cis shape: (T, head_dim // 2)
+    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+    freqs_cis = freqs_cis[:x.shape[1], :].view(1, x.shape[1], 1, -1)
+    x_rotated = torch.view_as_real(x_complex * freqs_cis).flatten(3)
+    return x_rotated.type_as(x)
+
 class Head(nn.Module):
-    """ one head of self-attention """
+    """ one head of self-attention with RoPE """
     def __init__(self, head_size: int, config: Type['MiniGPTConfig']):
         super().__init__()
+        self.head_size = head_size
         self.key = nn.Linear(config.d_model, head_size, bias=config.bias)
         self.query = nn.Linear(config.d_model, head_size, bias=config.bias)
         self.value = nn.Linear(config.d_model, head_size, bias=config.bias)
-        
-        # 'tril' is not a parameter, but a buffer that stays with the model
-        # It's a lower triangular matrix of ones
-        self.register_buffer('tril', torch.tril(torch.ones(config.seq_len, config.seq_len)))
-        
         self.dropout = nn.Dropout(config.dropout)
+        
+        # Precompute RoPE frequencies
+        self.register_buffer("freqs_cis", precompute_freqs_cis(head_size, config.seq_len))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Compute causal self-attention for a single head.
-        
-        Args:
-            x (torch.Tensor): Input tensor of shape (Batch, Time, Channels).
-            
-        Returns:
-            torch.Tensor: Attended values of shape (Batch, Time, head_size).
-        """
-        # input of size (batch, time-step, channels)
-        # output of size (batch, time-step, head_size)
         B, T, C = x.shape
         k = self.key(x)   # (B, T, head_size)
         q = self.query(x) # (B, T, head_size)
-        
         v = self.value(x) # (B, T, head_size)
+
+        # Reshape for RoPE: (B, T, 1, head_size)
+        q = q.view(B, T, 1, self.head_size)
+        k = k.view(B, T, 1, self.head_size)
         
-        # Use PyTorch 2.0 Flash Attention for massive speedup on A100/V100
-        # This completely replaces the manual matmul, masking, and softmax operations
+        # Apply Rotary Embeddings
+        q = apply_rotary_emb(q, self.freqs_cis)
+        k = apply_rotary_emb(k, self.freqs_cis)
+        
+        # Reshape back for attention: (B, T, head_size)
+        q = q.view(B, T, self.head_size)
+        k = k.view(B, T, self.head_size)
+
+        # Use PyTorch 2.0 Flash Attention
         dropout_p = self.dropout.p if self.training else 0.0
         out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
         

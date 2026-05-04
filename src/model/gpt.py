@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from src.model.config import MiniGPTConfig
-from src.model.blocks import Block
+from src.model.blocks import Block, RMSNorm
 
 class MiniGPT(nn.Module):
     """ The full GPT Language Model, with a context size of config.seq_len. """
@@ -28,26 +28,20 @@ class MiniGPT(nn.Module):
             # Token Embedding (Vocabulary Size x Hidden Dimension)
             wte = nn.Embedding(config.vocab_size, config.d_model),
             
-            # Positional Embedding (Sequence Length x Hidden Dimension)
-            wpe = nn.Embedding(config.seq_len, config.d_model),
-            
             # Dropout attached to the embeddings
             drop = nn.Dropout(config.dropout),
             
             # The core stack of Transformer blocks
             h = nn.ModuleList([Block(config) for _ in range(config.n_layers)]),
             
-            # The final layer normalization
-            ln_f = nn.LayerNorm(config.d_model),
+            # The final normalization (Now RMSNorm)
+            ln_f = RMSNorm(config.d_model),
         ))
         
         # The Language Modeling Head
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         
         # Weight tying:
-        # GPT-2 shares the weights between the token embedding and the final projection layer.
-        # This massively reduces parameters and generally improves performance because
-        # tokens map to the same mathematical feature space symmetrically.
         self.transformer.wte.weight = self.lm_head.weight
 
         # This initializes weights to a scaled normal distribution
@@ -56,10 +50,12 @@ class MiniGPT(nn.Module):
     def _init_weights(self, module):
         """
         Initialize the weights of the model.
-        GPT-2 style initialization.
+        GPT-2 / Llama style initialization.
         """
         if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            # Special scaling for output projections
+            std = 0.02 / (2 * self.config.n_layers) ** 0.5
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
@@ -68,14 +64,6 @@ class MiniGPT(nn.Module):
     def forward(self, idx: torch.Tensor, targets: torch.Tensor = None):
         """
         Perform a forward pass through the model.
-        
-        Args:
-            idx (torch.Tensor): LongTensor of shape (B, T) containing token indices.
-            targets (torch.Tensor, optional): LongTensor of shape (B, T) containing target token indices.
-            
-        Returns:
-            logits (torch.Tensor): Tensor of shape (B, T, vocab_size) with word scores.
-            loss (torch.Tensor, optional): Scalar CrossEntropy loss if targets are provided.
         """
         device = idx.device
         b, t = idx.size()
@@ -83,23 +71,17 @@ class MiniGPT(nn.Module):
         # Ensure sequence length is valid
         assert t <= self.config.seq_len, f"Cannot forward sequence of length {t}, block size is only {self.config.seq_len}"
 
-        # 1. Generate position ids: [0, 1, 2, ..., T-1], shape (T)
-        pos = torch.arange(0, t, dtype=torch.long, device=device)
-        
-        # 2. Extract Token Embeddings: shape (B, T, d_model)
+        # 1. Extract Token Embeddings: shape (B, T, d_model)
         tok_emb = self.transformer.wte(idx) 
         
-        # 3. Extract Positional Embeddings: shape (T, d_model) -> broadcasting handles batch B
-        pos_emb = self.transformer.wpe(pos) 
+        # 2. Apply dropout (Positioning is now handled inside heads via RoPE)
+        x = self.transformer.drop(tok_emb)
         
-        # 4. Add them together and apply dropout
-        x = self.transformer.drop(tok_emb + pos_emb)
-        
-        # 5. Pass through the sequence of Transformer blocks
+        # 3. Pass through the sequence of Transformer blocks
         for block in self.transformer.h:
             x = block(x)
             
-        # 6. Apply final LayerNorm
+        # 4. Apply final RMSNorm
         x = self.transformer.ln_f(x)
         
         # 7. Project back to vocabulary size
