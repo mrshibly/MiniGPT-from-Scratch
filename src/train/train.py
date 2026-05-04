@@ -123,7 +123,7 @@ def generate_sample(max_tokens=50):
     if tokenizer is None: return
     model.eval()
     # Start with just the End of Text token as a prompt
-    context = torch.tensor([[tokenizer.eot_token_id]], dtype=torch.long, device=device)
+    context = torch.tensor([[tokenizer.eot_id]], dtype=torch.long, device=device)
     # Generate
     generated_ids = model.generate(context, max_new_tokens=max_tokens)[0].tolist()
     # Decode
