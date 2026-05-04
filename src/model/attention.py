@@ -34,19 +34,12 @@ class Head(nn.Module):
         k = self.key(x)   # (B, T, head_size)
         q = self.query(x) # (B, T, head_size)
         
-        # compute attention scores ("affinities")
-        # Dot product Query and Key, scale by head_size
-        wei = q @ k.transpose(-2, -1) * (k.shape[-1]**-0.5) # (B, T, T)
-        
-        # Causal Masking: ensure tokens cannot look into the future
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-        
-        wei = F.softmax(wei, dim=-1) # (B, T, T)
-        wei = self.dropout(wei)
-        
-        # perform the weighted aggregation of the values
         v = self.value(x) # (B, T, head_size)
-        out = wei @ v # (B, T, head_size)
+        
+        # Use PyTorch 2.0 Flash Attention for massive speedup on A100/V100
+        # This completely replaces the manual matmul, masking, and softmax operations
+        dropout_p = self.dropout.p if self.training else 0.0
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
         
         return out
 
