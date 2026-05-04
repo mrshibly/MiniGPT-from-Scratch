@@ -23,9 +23,9 @@ always_save_checkpoint = True
 init_from = 'resume' # 'scratch' or 'resume'
 
 # Data configuration
-batch_size = 8 # Micro-batch size. Increase if your GPU has more VRAM.
-grad_accum_steps = 4 # Total batch size = batch_size * grad_accum_steps
-max_steps = 10000
+batch_size = 32 # Increased for Pro GPUs
+grad_accum_steps = 16 # Total batch size = 32 * 16 = 512
+max_steps = 150000 # Higher target for 10GB data run
 
 # Learning Rate configuration
 max_lr = 4e-4 
@@ -69,7 +69,7 @@ train_loader = TokenDataLoader(train_bin, device=device_type)
 val_loader = TokenDataLoader(val_bin, device=device_type)
 
 # Setup Model
-config = MiniGPTConfig.standard() # Use 50M param config
+config = MiniGPTConfig.stretch() # Use 124M param config for Pro run
 model = MiniGPT(config)
 model.to(device)
 
