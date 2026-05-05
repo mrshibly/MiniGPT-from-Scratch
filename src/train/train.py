@@ -33,30 +33,51 @@ min_lr = max_lr * 0.1
 warmup_steps = 200
 lr_decay_iters = max_steps
 
-# Device and precision
-if torch.cuda.is_available():
-    device = "cuda"
-    device_type = "cuda"
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    device = "mps"
-    device_type = "mps"
+# -----------------------------------------------------------------------------
+# DDP / Multi-GPU Initialization
+# -----------------------------------------------------------------------------
+ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
+if ddp:
+    from torch.distributed import init_process_group, destroy_process_group
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    init_process_group(backend='nccl')
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{ddp_local_rank}'
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+    seed_offset = ddp_rank # each process gets a different seed
 else:
-    device = "cpu"
-    device_type = "cpu"
+    # vanilla single-GPU run
+    master_process = True
+    seed_offset = 0
+    ddp_world_size = 1
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
 
-print(f"Targeting device: {device}")
+device_type = 'cuda' if 'cuda' in device else 'cpu'
+if master_process:
+    print(f"Targeting device: {device} | DDP: {ddp}")
 
-# We use bfloat16 for matrix multiplications if supported to save memory and go faster
+# AMP context manager
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
-# AMP context manager (Automatic Mixed Precision)
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-ctx = torch.autocast(device_type=device_type, dtype=ptdtype) if device_type == 'cuda' else torch.autocast(device_type=device_type, dtype=ptdtype, enabled=False) if device_type == 'mps' else torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=False)
+ctx = torch.autocast(device_type=device_type, dtype=ptdtype) if device_type == 'cuda' else torch.autocast(device_type=device_type, dtype=ptdtype, enabled=False)
+
 
 
 # -----------------------------------------------------------------------------
 # Initialization
 # -----------------------------------------------------------------------------
 os.makedirs(out_dir, exist_ok=True)
+torch.manual_seed(1337 + seed_offset)
+torch.backends.cuda.matmul.allow_tf32 = True 
+torch.backends.cudnn.allow_tf32 = True
 
 # Data loaders
 train_bin = os.path.join("data", "processed", "train.bin")
@@ -97,7 +118,16 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=max_lr, weight_decay=1e-1, 
 scaler = torch.amp.GradScaler('cuda') if device_type == 'cuda' else None
 
 params = sum(p.numel() for p in model.parameters())
-print(f"Total Parameters: {params/1e6:.2f} M | Using Precision: {dtype}")
+if master_process:
+    print(f"Total Parameters: {params/1e6:.2f} M | Using Precision: {dtype}")
+
+# Wrap model in DDP if needed
+if ddp:
+    model = DDP(model, device_ids=[ddp_local_rank])
+
+# Adjust grad_accum_steps for DDP
+assert grad_accum_steps % ddp_world_size == 0
+grad_accum_steps //= ddp_world_size
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -114,7 +144,20 @@ def estimate_loss():
             with ctx:
                 logits, loss = model(X, targets=Y)
             losses[k] = loss.item()
-        out[split] = losses.mean().item()
+        out[split] = losses.mean()
+    
+    if ddp:
+        import torch.distributed as dist
+        for split in ['train', 'val']:
+            # Move to tensor for all_reduce
+            loss_tensor = torch.tensor(out[split], device=device)
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
+            out[split] = loss_tensor.item()
+    else:
+        # Convert to float
+        for split in ['train', 'val']:
+            out[split] = out[split].item()
+
     model.train()
     return out
 
@@ -154,41 +197,55 @@ start_step = 0
 # Check for existing checkpoint to resume from
 ckpt_path = os.path.join(out_dir, 'ckpt.pt')
 if init_from == 'resume' and os.path.exists(ckpt_path):
-    print(f"Resuming training from {ckpt_path}...")
+    if master_process:
+        print(f"Resuming training from {ckpt_path}...")
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint['model'])
+    
+    # DDP models have .module prefix, so we handle both
+    state_dict = checkpoint['model']
+    unwanted_prefix = '_orig_mod.'
+    for k,v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+            
+    model.load_state_dict(state_dict)
     optimizer.load_state_dict(checkpoint['optimizer'])
     start_step = checkpoint['step'] + 1
     best_val_loss = checkpoint.get('best_val_loss', 1e9)
-    print(f"-> Restarting from Step {start_step} (Best Val Loss: {best_val_loss:.4f})")
+    if master_process:
+        print(f"-> Restarting from Step {start_step} (Best Val Loss: {best_val_loss:.4f})")
 
 t0 = time.time()
 
-print("\nStarting Training...")
+if master_process:
+    print("\nStarting Training...")
 for step in range(start_step, max_steps):
 
     # 1. Validation & Checkpointing Phase
     if step % eval_interval == 0 or step == max_steps - 1:
         losses = estimate_loss()
-        print(f"\nStep {step:4d} | Train Loss: {losses['train']:.4f} | Val Loss: {losses['val']:.4f}")
-        
-        # Save exact checkpoint if validation improved
-        if losses['val'] < best_val_loss or always_save_checkpoint:
-            best_val_loss = losses['val']
-            if step > 0: # don't save the random initialization
-                checkpoint = {
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'step': step,
-                    'best_val_loss': best_val_loss,
-                    'config': config,
-                }
-                print(f"-> Saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
-                
-        # Generate some text to watch the model "learn"
-        if step > 0:
-            generate_sample()
+        if master_process:
+            print(f"\nStep {step:4d} | Train Loss: {losses['train']:.4f} | Val Loss: {losses['val']:.4f}")
+            
+            # Save exact checkpoint if validation improved
+            if losses['val'] < best_val_loss or always_save_checkpoint:
+                best_val_loss = losses['val']
+                if step > 0: # don't save the random initialization
+                    # In DDP, we save model.module
+                    raw_model = model.module if ddp else model
+                    checkpoint = {
+                        'model': raw_model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'step': step,
+                        'best_val_loss': best_val_loss,
+                        'config': config,
+                    }
+                    print(f"-> Saving checkpoint to {out_dir}")
+                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                    
+            # Generate some text
+            if step > 0:
+                generate_sample()
 
     # Determine and set the learning rate for this step
     lr = get_lr(step)
@@ -223,12 +280,16 @@ for step in range(start_step, max_steps):
         optimizer.step()
 
     # 3. Logging Phase
-    if step % log_interval == 0:
+    if step % log_interval == 0 and master_process:
         t1 = time.time()
         dt = t1 - t0
         t0 = t1
         # Calculate tokens processed per second (over the log_interval window)
-        tokens_per_sec = (batch_size * grad_accum_steps * config.seq_len * log_interval) / dt
+        # In DDP, tokens per second is world_size * tokens processed by one rank
+        tokens_per_sec = (batch_size * grad_accum_steps * ddp_world_size * config.seq_len * log_interval) / dt
         print(f"Step {step:4d} | Loss: {loss_accum:.4f} | LR: {lr:.2e} | Time: {dt*1000:.2f}ms | Tok/sec: {tokens_per_sec:.2f}")
+
+if ddp:
+    destroy_process_group()
 
 print("\nDone!")
