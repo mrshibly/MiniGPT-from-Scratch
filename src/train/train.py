@@ -155,7 +155,7 @@ start_step = 0
 ckpt_path = os.path.join(out_dir, 'ckpt.pt')
 if init_from == 'resume' and os.path.exists(ckpt_path):
     print(f"Resuming training from {ckpt_path}...")
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model'])
     optimizer.load_state_dict(checkpoint['optimizer'])
     start_step = checkpoint['step'] + 1
