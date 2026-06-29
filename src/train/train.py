@@ -18,13 +18,13 @@ from src.tokenizer.minigpt_tokenizer import MiniGPTTokenizer
 out_dir = 'checkpoints'
 eval_interval = 250
 eval_iters = 20
-log_interval = 20
+log_interval = 10
 always_save_checkpoint = True
 init_from = 'resume' # 'scratch' or 'resume'
 
 # Data configuration
-batch_size = 32 # Increased for Pro GPUs
-grad_accum_steps = 16 # Total batch size = 32 * 16 = 512
+batch_size = 32 # Micro batch size for vectorized GPU training
+grad_accum_steps = 8 # Total batch size = 32 * 8 = 256
 max_steps = 150000 # Higher target for 10GB data run
 
 # Learning Rate configuration

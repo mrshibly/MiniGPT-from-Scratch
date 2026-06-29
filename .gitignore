@@ -1,10 +1,29 @@
+# Virtual environment
 venv/
+.venv/
+env/
+
+# Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Checkpoints & Models
 checkpoints/
-!checkpoints/ckpt.pt
+*.pt
+*.bin
+*.onnx
+
+# Data files
 data/raw/
-data/processed/*.txt
+data/processed/
 !data/tokenizer/tokenizer.json
-outputs/
+
+# IDE & Logs
+.vscode/
+.idea/
+*.log
