@@ -26,71 +26,98 @@ def prepare_dataset(
     train_f = open(train_output, 'wb')
     val_f = open(val_output, 'wb')
     
-    train_buffer = []
-    val_buffer = []
-    chunk_size = 1000000 # Flush every 1 Million tokens
+    # We read the file in chunks of ~50 MB to keep RAM usage extremely low (~100-200MB)
+    chunk_size_bytes = 50 * 1024 * 1024
     
     train_tokens = 0
     val_tokens = 0
     doc_count = 0
     
-    print(f"Reading and encoding {input_file} in streaming mode (low memory)...")
+    total_size = os.path.getsize(input_file)
+    print(f"Reading and encoding {input_file} in multi-threaded batch mode (extremely fast)...")
     
-    # Process the file line by line to prevent loading large files in RAM
     with open(input_file, 'r', encoding='utf-8') as f:
-        doc_lines = []
-        for line in tqdm(f, desc="Tokenizing dataset stream"):
-            stripped = line.strip()
-            if not stripped:
-                # Empty line marks the end of a document
-                if doc_lines:
-                    doc = " ".join(doc_lines)
-                    doc_lines = []
-                    
-                    # Encode text and append EOT token
-                    tokens = tokenizer.encode(doc, return_tensors="list")
-                    tokens.append(tokenizer.eot_id)
-                    
-                    # Deterministic split: 90% train, 10% val (every 10th document is val)
-                    if doc_count % 10 == 0:
-                        val_buffer.extend(tokens)
-                        if len(val_buffer) >= chunk_size:
-                            np_array = np.array(val_buffer, dtype=dtype)
-                            val_f.write(np_array.tobytes())
-                            val_tokens += len(val_buffer)
-                            val_buffer = []
-                    else:
-                        train_buffer.extend(tokens)
-                        if len(train_buffer) >= chunk_size:
-                            np_array = np.array(train_buffer, dtype=dtype)
-                            train_f.write(np_array.tobytes())
-                            train_tokens += len(train_buffer)
-                            train_buffer = []
-                    
-                    doc_count += 1
-            else:
-                doc_lines.append(stripped)
-                
-        # Process the final document if the file didn't end with an empty line
-        if doc_lines:
-            doc = " ".join(doc_lines)
-            tokens = tokenizer.encode(doc, return_tensors="list")
-            tokens.append(tokenizer.eot_id)
-            if doc_count % 10 == 0:
-                val_buffer.extend(tokens)
-            else:
-                train_buffer.extend(tokens)
-            doc_count += 1
+        pbar = tqdm(total=total_size, unit="B", unit_scale=True, desc="Encoding dataset")
+        leftover_text = ""
+        
+        while True:
+            chunk = f.read(chunk_size_bytes)
+            if not chunk:
+                break
             
-    # Flush remaining tokens in buffer
-    if train_buffer:
-        np_array = np.array(train_buffer, dtype=dtype)
-        train_f.write(np_array.tobytes())
-        train_tokens += len(train_buffer)
-    if val_buffer:
-        np_array = np.array(val_buffer, dtype=dtype)
-        val_f.write(np_array.tobytes())
-        val_tokens += len(val_buffer)
+            pbar.update(len(chunk.encode('utf-8')))
+            
+            # Combine with leftover from previous chunk
+            text = leftover_text + chunk
+            
+            # Find the last document boundary \n\n in the text to avoid cutting documents
+            last_boundary = text.rfind("\n\n")
+            if last_boundary != -1:
+                chunk_text = text[:last_boundary]
+                leftover_text = text[last_boundary+2:]
+            else:
+                chunk_text = text
+                leftover_text = ""
+                
+            # Split into documents
+            documents = [d.strip() for d in chunk_text.split("\n\n") if d.strip()]
+            if not documents:
+                continue
+                
+            # Use Hugging Face's multi-threaded Rust batch encoder for speed
+            encodings = tokenizer.tokenizer.encode_batch(documents)
+            
+            train_buffer = []
+            val_buffer = []
+            
+            for enc in encodings:
+                tokens = enc.ids
+                # Append End Of Text token
+                tokens.append(tokenizer.eot_id)
+                
+                # Deterministic train/val split (90% train, 10% val)
+                if doc_count % 10 == 0:
+                    val_buffer.extend(tokens)
+                else:
+                    train_buffer.extend(tokens)
+                doc_count += 1
+                
+            # Write buffers directly to disk
+            if train_buffer:
+                np_array = np.array(train_buffer, dtype=dtype)
+                train_f.write(np_array.tobytes())
+                train_tokens += len(train_buffer)
+            if val_buffer:
+                np_array = np.array(val_buffer, dtype=dtype)
+                val_f.write(np_array.tobytes())
+                val_tokens += len(val_buffer)
+                
+        # Process any remaining text in leftover
+        if leftover_text.strip():
+            documents = [d.strip() for d in leftover_text.split("\n\n") if d.strip()]
+            encodings = tokenizer.tokenizer.encode_batch(documents)
+            
+            train_buffer = []
+            val_buffer = []
+            for enc in encodings:
+                tokens = enc.ids
+                tokens.append(tokenizer.eot_id)
+                if doc_count % 10 == 0:
+                    val_buffer.extend(tokens)
+                else:
+                    train_buffer.extend(tokens)
+                doc_count += 1
+                
+            if train_buffer:
+                np_array = np.array(train_buffer, dtype=dtype)
+                train_f.write(np_array.tobytes())
+                train_tokens += len(train_buffer)
+            if val_buffer:
+                np_array = np.array(val_buffer, dtype=dtype)
+                val_f.write(np_array.tobytes())
+                val_tokens += len(val_buffer)
+                
+        pbar.close()
         
     train_f.close()
     val_f.close()
