@@ -20,73 +20,85 @@ def prepare_dataset(
     # We use uint16 because our vocab size (16,384) fits easily (max 65,535)
     dtype = np.uint16
     
-    print(f"Reading data from {input_file}...")
-    
-    # Read the whole file into memory since it's only 10MB
-    with open(input_file, 'r', encoding='utf-8') as f:
-        data = f.read()
-    
-    # Split the raw data into documents based on our spacing
-    documents = data.split("\n\n")
-    documents = [d.strip() for d in documents if d.strip()]
-    
-    print(f"Loaded {len(documents)} documents.")
-    
-    # Shuffle documents to ensure mixed train/val splits
-    # We use a fixed seed for reproducibility
-    np.random.seed(42)
-    np.random.shuffle(documents)
-    
-    val_split_idx = int(len(documents) * val_ratio)
-    val_docs = documents[:val_split_idx]
-    train_docs = documents[val_split_idx:]
-    
-    print(f"Split into {len(train_docs)} train docs and {len(val_docs)} val docs.")
-    
-    # helper function to write a split to a .bin file
-    def write_split(docs, out_path, split_name):
-        print(f"Tokenizing {split_name} split...")
-        
-        # We will accumulate tokens and write them in chunks
-        chunk_size = 1000000 # 1 Million tokens
-        buffer = []
-        
-        # First calculate total tokens roughly to set up the memory mapped file
-        # We don't know exact token count until we tokenize, so we just append to file
-        
-        with open(out_path, 'wb') as f:
-            for doc in tqdm(docs, desc=f"Writing {split_name}"):
-                # Encode text
-                tokens = tokenizer.encode(doc, return_tensors="list")
-                # Add End of Text token
-                tokens.append(tokenizer.eot_id)
-                buffer.extend(tokens)
-                
-                # Write to disk if buffer is large enough
-                if len(buffer) >= chunk_size:
-                    np_array = np.array(buffer, dtype=dtype)
-                    f.write(np_array.tobytes())
-                    buffer = []
-            
-            # Write remaining tokens
-            if buffer:
-                np_array = np.array(buffer, dtype=dtype)
-                f.write(np_array.tobytes())
-                
-        # Get final size
-        file_size_bytes = os.path.getsize(out_path)
-        total_tokens = file_size_bytes // np.dtype(dtype).itemsize
-        print(f"Finished {split_name}: {total_tokens:,} tokens saved to {out_path}.")
-        return total_tokens
-
     os.makedirs(os.path.dirname(train_output), exist_ok=True)
     
-    train_tokens = write_split(train_docs, train_output, "train")
-    val_tokens = write_split(val_docs, val_output, "val")
+    # Open files in binary write mode
+    train_f = open(train_output, 'wb')
+    val_f = open(val_output, 'wb')
     
-    print(f"\nTotal tokens dataset: {train_tokens + val_tokens:,}")
-    print("Pre-processing complete!")
-
+    train_buffer = []
+    val_buffer = []
+    chunk_size = 1000000 # Flush every 1 Million tokens
+    
+    train_tokens = 0
+    val_tokens = 0
+    doc_count = 0
+    
+    print(f"Reading and encoding {input_file} in streaming mode (low memory)...")
+    
+    # Process the file line by line to prevent loading large files in RAM
+    with open(input_file, 'r', encoding='utf-8') as f:
+        doc_lines = []
+        for line in tqdm(f, desc="Tokenizing dataset stream"):
+            stripped = line.strip()
+            if not stripped:
+                # Empty line marks the end of a document
+                if doc_lines:
+                    doc = " ".join(doc_lines)
+                    doc_lines = []
+                    
+                    # Encode text and append EOT token
+                    tokens = tokenizer.encode(doc, return_tensors="list")
+                    tokens.append(tokenizer.eot_id)
+                    
+                    # Deterministic split: 90% train, 10% val (every 10th document is val)
+                    if doc_count % 10 == 0:
+                        val_buffer.extend(tokens)
+                        if len(val_buffer) >= chunk_size:
+                            np_array = np.array(val_buffer, dtype=dtype)
+                            val_f.write(np_array.tobytes())
+                            val_tokens += len(val_buffer)
+                            val_buffer = []
+                    else:
+                        train_buffer.extend(tokens)
+                        if len(train_buffer) >= chunk_size:
+                            np_array = np.array(train_buffer, dtype=dtype)
+                            train_f.write(np_array.tobytes())
+                            train_tokens += len(train_buffer)
+                            train_buffer = []
+                    
+                    doc_count += 1
+            else:
+                doc_lines.append(stripped)
+                
+        # Process the final document if the file didn't end with an empty line
+        if doc_lines:
+            doc = " ".join(doc_lines)
+            tokens = tokenizer.encode(doc, return_tensors="list")
+            tokens.append(tokenizer.eot_id)
+            if doc_count % 10 == 0:
+                val_buffer.extend(tokens)
+            else:
+                train_buffer.extend(tokens)
+            doc_count += 1
+            
+    # Flush remaining tokens in buffer
+    if train_buffer:
+        np_array = np.array(train_buffer, dtype=dtype)
+        train_f.write(np_array.tobytes())
+        train_tokens += len(train_buffer)
+    if val_buffer:
+        np_array = np.array(val_buffer, dtype=dtype)
+        val_f.write(np_array.tobytes())
+        val_tokens += len(val_buffer)
+        
+    train_f.close()
+    val_f.close()
+    
+    print(f"\nPreprocessing Complete!")
+    print(f"Total Documents: {doc_count:,}")
+    print(f"Train Tokens: {train_tokens:,} saved to {train_output}")
+    print(f"Val Tokens: {val_tokens:,} saved to {val_output}")
 
 if __name__ == "__main__":
     input_txt = os.path.join("data", "processed", "clean_sample.txt")
